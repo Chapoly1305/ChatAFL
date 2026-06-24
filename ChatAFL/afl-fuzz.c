@@ -1448,13 +1448,17 @@ HANDLE_RESPONSES:
   if (likely_buggy && false_negative_reduction)
     return 0;
 
-  if (terminate_child && (child_pid > 0))
-    kill(child_pid, SIGTERM);
+  /* Snapshot child_pid before sending SIGTERM: a concurrent forkserver read on
+     the main path overwrites the global, causing kill(0, SIGTERM) to hit the
+     entire process group (fuzzer included) instead of just the forked child. */
+  s32 term_pid = child_pid;
+  if (terminate_child && (term_pid > 0))
+    kill(term_pid, SIGTERM);
 
   // give the server a bit more time to gracefully terminate
   while (1)
   {
-    int status = kill(child_pid, 0);
+    int status = kill(term_pid, 0);
     if ((status != 0) && (errno == ESRCH))
       break;
   }

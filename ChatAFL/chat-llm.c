@@ -47,26 +47,45 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     CURL *curl;
     CURLcode res = CURLE_OK;
     char *answer = NULL;
+    char *url_buf = NULL;
     char *url = NULL;
-    if (strcmp(model, "instruct") == 0)
+
+    const char *base = getenv("CHATAFL_OPENAI_BASE");
+    if (base)
     {
-        url = "https://api.openai.com/v1/completions";
+        if (strcmp(model, "instruct") == 0)
+            asprintf(&url_buf, "%s/v1/completions", base);
+        else
+            asprintf(&url_buf, "%s/v1/chat/completions", base);
+        url = url_buf;
     }
     else
     {
-        url = "https://api.openai.com/v1/chat/completions";
+        if (strcmp(model, "instruct") == 0)
+            url = "https://api.openai.com/v1/completions";
+        else
+            url = "https://api.openai.com/v1/chat/completions";
     }
-    char *auth_header = "Authorization: Bearer " OPENAI_TOKEN;
+
+    const char *token = getenv("CHATAFL_OPENAI_KEY");
+    if (!token) token = getenv("OPENAI_API_KEY");
+    if (!token) token = OPENAI_TOKEN;
+    char *auth_header = NULL;
+    asprintf(&auth_header, "Authorization: Bearer %s", token);
+
+    const char *llm_model = getenv("CHATAFL_OPENAI_MODEL");
     char *content_header = "Content-Type: application/json";
     char *accept_header = "Accept: application/json";
     char *data = NULL;
     if (strcmp(model, "instruct") == 0)
     {
-        asprintf(&data, "{\"model\": \"gpt-3.5-turbo-instruct\", \"prompt\": \"%s\", \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
+        const char *m = llm_model ? llm_model : "gpt-3.5-turbo-instruct";
+        asprintf(&data, "{\"model\": \"%s\", \"prompt\": \"%s\", \"max_tokens\": %d, \"temperature\": %f}", m, prompt, MAX_TOKENS, temperature);
     }
     else
     {
-        asprintf(&data, "{\"model\": \"gpt-3.5-turbo\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", prompt, MAX_TOKENS, temperature);
+        const char *m = llm_model ? llm_model : "gpt-3.5-turbo";
+        asprintf(&data, "{\"model\": \"%s\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", m, prompt, MAX_TOKENS, temperature);
     }
     curl_global_init(CURL_GLOBAL_DEFAULT);
     do
@@ -139,9 +158,9 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     } while ((res != CURLE_OK || answer == NULL) && (--tries > 0));
 
     if (data != NULL)
-    {
         free(data);
-    }
+    free(auth_header);
+    free(url_buf);
 
     curl_global_cleanup();
     return answer;
