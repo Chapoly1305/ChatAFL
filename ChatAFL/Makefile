@@ -69,8 +69,24 @@ afl-as: afl-as.c afl-as.h $(COMM_HDR) | test_x86
 	$(CC) $(CFLAGS) $@.c -o $@ $(LDFLAGS)
 	ln -sf afl-as as
 
-afl-fuzz: afl-fuzz.c $(COMM_HDR) aflnet.o aflnet.h chat-llm.o chat-llm.h | test_x86
-	$(CC) $(CFLAGS) $@.c aflnet.o chat-llm.o -o $@ $(LDFLAGS) -lcurl -ljson-c -lpcre2-8
+ifeq "$(MATTER)" "1"
+MATTER_CFLAGS  = -DMATTER
+MATTER_SRCS    = chat-llm-tlv.o chat-llm-matter.o
+MATTER_LDFLAGS = -lpcre2-8
+else
+MATTER_CFLAGS  =
+MATTER_SRCS    =
+MATTER_LDFLAGS =
+endif
+
+chat-llm-tlv.o: chat-llm-tlv.c chat-llm-tlv.h
+	$(CC) $(CFLAGS) $(MATTER_CFLAGS) -c $< -o $@
+
+chat-llm-matter.o: chat-llm-matter.c chat-llm-tlv.h chat-llm.h
+	$(CC) $(CFLAGS) $(MATTER_CFLAGS) -c $< -o $@
+
+afl-fuzz: afl-fuzz.c $(COMM_HDR) aflnet.o aflnet.h chat-llm.o chat-llm.h $(MATTER_SRCS) | test_x86
+	$(CC) $(CFLAGS) $(MATTER_CFLAGS) $@.c aflnet.o chat-llm.o $(MATTER_SRCS) -o $@ $(LDFLAGS) -lcurl -ljson-c $(MATTER_LDFLAGS)
 
 afl-replay: afl-replay.c $(COMM_HDR) aflnet.o aflnet.h | test_x86
 	$(CC) $(CFLAGS) $@.c aflnet.o -o $@ $(LDFLAGS)

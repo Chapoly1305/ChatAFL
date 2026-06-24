@@ -30,8 +30,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
-AFLNET_DIR="${REPO_ROOT}/examples/fuzzers/aflnet"
-MATTER_DIR="${AFLNET_DIR}/matter"
+CHATAFL_DIR="${REPO_ROOT}/examples/fuzzers/ChatAFL/ChatAFL"
+MATTER_DIR="${CHATAFL_DIR}/matter"
 RUNNER="${MATTER_DIR}/run_campaign.sh"
 REPLAYER="${MATTER_DIR}/replay_queue_for_coverage.py"
 AGGREGATOR="${REPO_ROOT}/examples/fuzzers/eclipsefuzz/stateful/tools/aggregate_coverage_over_time.py"
@@ -245,13 +245,12 @@ for i in $(seq 1 "${INSTANCES}"); do
         AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \
         AFL_NO_AFFINITY=1 \
         AFL_SKIP_CRASHES=1 \
-        AFLNET="${AFLNET_DIR}" \
+        CHATAFL_DIR="${CHATAFL_DIR}" \
         DUT="${FUZZ_DUT}" \
         PORT="${fuzz_port}" \
         DELAY=20000 \
         SEEDS="${SEED_DIR}" \
         KVS="${inst_kvs}" \
-        FUZZER="${FUZZER:-chatafl}" \
         CHATAFL_LLM="${CHATAFL_LLM:-0}" \
         CHATAFL_OPENAI_KEY="${CHATAFL_OPENAI_KEY:-}" \
         CHATAFL_OPENAI_BASE="${CHATAFL_OPENAI_BASE:-}" \

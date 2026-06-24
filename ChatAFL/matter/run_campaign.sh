@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Drive an AFLNet fuzzing campaign against the patched Matter all-clusters-app DUT.
+# Drive a ChatAFL fuzzing campaign against the patched Matter all-clusters-app DUT.
 #
 # Prerequisites (Linux campaign host):
-#   1. AFLNet built with the Matter parser (this tree): `make clean all`.
+#   1. ChatAFL built with Matter support: `make MATTER=1 clean all`
 #      (llvm_mode / afl-clang-fast is NOT required — see note below.)
 #   2. The DUT built for Linux with:
 #        - matter_fuzz_dut_transport=true   (plaintext accept + session injection
@@ -22,23 +22,23 @@
 # AFL edge-coverage bitmap + forkserver, with no toolchain swap.
 #
 # Usage:
-#   AFLNET=/path/to/aflnet DUT=/path/to/chip-all-clusters-app ./run_campaign.sh [out_dir]
+#   CHATAFL_DIR=/path/to/ChatAFL DUT=/path/to/chip-all-clusters-app ./run_campaign.sh [out_dir]
 #
 # Env knobs:
 #   PORT=5560   operational UDP port (must avoid a concurrent EP2 run on 5540)
 #   SEEDS=seeds seed corpus dir
 #   KVS=...     DUT key-value store path (wiped each start)
-#   FUZZER=aflnet|chatafl   which baseline to run (default aflnet)
-#                           chatafl uses the -DCHATAFL binary + the LLM layer
-#   CHATAFL_LLM=1           (chatafl only) enable LLM calls; needs CHATAFL_OPENAI_KEY
-#   CHATAFL_OPENAI_KEY=sk-… (chatafl only) OpenAI key; absent ⇒ catalog-only, offline
+#   CHATAFL_LLM=1           enable LLM calls; needs CHATAFL_OPENAI_KEY
+#   CHATAFL_OPENAI_KEY=sk-… OpenAI key; absent ⇒ catalog-only, offline
+#   CHATAFL_OPENAI_BASE=…   custom API base (e.g. Ollama)
+#   CHATAFL_OPENAI_MODEL=…  model name for custom base
 set -euo pipefail
 
-AFLNET="${AFLNET:?set AFLNET to the aflnet checkout}"
+CHATAFL_DIR="${CHATAFL_DIR:?set CHATAFL_DIR to the ChatAFL checkout}"
 DUT="${DUT:?set DUT to the AFL-instrumented all-clusters-app binary}"
-OUT="${1:-aflnet-out}"
+OUT="${1:-chatafl-out}"
 SEEDS="${SEEDS:-seeds}"
-KVS="${KVS:-/tmp/afl-matter-kvs}"
+KVS="${KVS:-/tmp/chatafl-matter-kvs}"
 PORT="${PORT:-5560}"
 # Settle time (usecs) between forking a run's DUT child and sending the request.
 # The deferred child resumes straight at the event loop, but still needs to reach
@@ -52,33 +52,16 @@ DELAY="${DELAY:-10000}"
 [ -d "$SEEDS" ] || { echo "seed dir '$SEEDS' missing — run gen_matter_seeds.py first"; exit 1; }
 rm -f "$KVS"
 
-# Select the fuzzer binary. The ChatAFL variant is built with `make CHATAFL=1`
-# (Dockerfile installs it as afl-fuzz-chatafl); fall back to afl-fuzz if a single
-# CHATAFL-enabled binary was built in place. CHATAFL=1 turns the LLM layer on at
-# run time; the binary still runs as plain AFLNet when CHATAFL is unset.
-FUZZER="${FUZZER:-aflnet}"
-case "$FUZZER" in
-  aflnet)
-    AFL_BIN="$AFLNET/afl-fuzz"
-    [ -x "$AFLNET/afl-fuzz-aflnet" ] && AFL_BIN="$AFLNET/afl-fuzz-aflnet"
-    ;;
-  chatafl)
-    AFL_BIN="$AFLNET/afl-fuzz-chatafl"
-    [ -x "$AFL_BIN" ] || AFL_BIN="$AFLNET/afl-fuzz"
-    export CHATAFL=1
-    export CHATAFL_LLM="${CHATAFL_LLM:-0}"
-    # LLM is satisfied by an API key OR a custom base (e.g. Ollama at
-    # CHATAFL_OPENAI_BASE=http://localhost:11434, CHATAFL_OPENAI_MODEL=qwen2.5:1.5b).
-    if [ "$CHATAFL_LLM" = "1" ] &&
-       [ -z "${CHATAFL_OPENAI_KEY:-}${OPENAI_API_KEY:-}${CHATAFL_OPENAI_BASE:-}" ]; then
-      echo "FUZZER=chatafl CHATAFL_LLM=1 but no CHATAFL_OPENAI_KEY/OPENAI_API_KEY/"
-      echo "CHATAFL_OPENAI_BASE set; the run will proceed catalog-only (offline)."
-    fi
-    ;;
-  *)
-    echo "unknown FUZZER='$FUZZER' (expected aflnet|chatafl)"; exit 1 ;;
-esac
-[ -x "$AFL_BIN" ] || { echo "fuzzer binary '$AFL_BIN' not found/executable"; exit 1; }
+# ChatAFL binary (built with `make MATTER=1`).
+AFL_BIN="$CHATAFL_DIR/afl-fuzz"
+[ -x "$AFL_BIN" ] || { echo "ChatAFL binary '$AFL_BIN' not found; build with: make MATTER=1"; exit 1; }
+export CHATAFL=1
+export CHATAFL_LLM="${CHATAFL_LLM:-0}"
+if [ "$CHATAFL_LLM" = "1" ] &&
+   [ -z "${CHATAFL_OPENAI_KEY:-}${OPENAI_API_KEY:-}${CHATAFL_OPENAI_BASE:-}" ]; then
+  echo "CHATAFL_LLM=1 but no CHATAFL_OPENAI_KEY/OPENAI_API_KEY/"
+  echo "CHATAFL_OPENAI_BASE set; the run will proceed catalog-only (offline)."
+fi
 
 # AFL host-environment bypasses (the campaign host's core_pattern pipes to an
 # external handler and the CPU governor is 'powersave'; neither is fatal here).
