@@ -45,7 +45,7 @@ SEEDS_KIND="both"
 SEED_LIMIT=0
 FUZZ_DUT="${REPO_ROOT}/out/afl-dut-cov/chip-all-clusters-app"
 COV_DUT="${REPO_ROOT}/out/afl-dut-llvmcov/chip-all-clusters-app"
-OUT_DIR="${REPO_ROOT}/out/aflnet-eval-$(date +%Y%m%d-%H%M%S)"
+OUT_DIR="${REPO_ROOT}/out/chatafl-eval-$(date +%Y%m%d-%H%M%S)"
 DO_AGGREGATE=1
 
 while [[ $# -gt 0 ]]; do
@@ -61,14 +61,14 @@ while [[ $# -gt 0 ]]; do
     --out-dir)         OUT_DIR="$2";         shift 2 ;;
     --no-aggregate)    DO_AGGREGATE=0;       shift ;;
     -h|--help) sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "[afl-eval] unknown arg: $1" >&2; exit 1 ;;
+    *) echo "[chatafl-eval] unknown arg: $1" >&2; exit 1 ;;
   esac
 done
 
 # Validate required binaries.
-[[ -x "${FUZZ_DUT}" ]] || { echo "[afl-eval] fuzz DUT not found: ${FUZZ_DUT}" >&2; exit 1; }
-[[ -x "${COV_DUT}"  ]] || { echo "[afl-eval] coverage DUT not found: ${COV_DUT}" >&2; exit 1; }
-[[ -x "${RUNNER}"   ]] || { echo "[afl-eval] run_campaign.sh not found: ${RUNNER}" >&2; exit 1; }
+[[ -x "${FUZZ_DUT}" ]] || { echo "[chatafl-eval] fuzz DUT not found: ${FUZZ_DUT}" >&2; exit 1; }
+[[ -x "${COV_DUT}"  ]] || { echo "[chatafl-eval] coverage DUT not found: ${COV_DUT}" >&2; exit 1; }
+[[ -x "${RUNNER}"   ]] || { echo "[chatafl-eval] run_campaign.sh not found: ${RUNNER}" >&2; exit 1; }
 
 # Ensure llvm-profdata is available (needed by sampler).
 if ! command -v llvm-profdata >/dev/null 2>&1; then
@@ -76,7 +76,7 @@ if ! command -v llvm-profdata >/dev/null 2>&1; then
   [[ -x "${CIPD_BIN}/llvm-profdata" ]] && export PATH="${CIPD_BIN}:${PATH}"
 fi
 command -v llvm-profdata >/dev/null 2>&1 || {
-  echo "[afl-eval] llvm-profdata not found; cannot take coverage snapshots" >&2; exit 1
+  echo "[chatafl-eval] llvm-profdata not found; cannot take coverage snapshots" >&2; exit 1
 }
 
 # Resolve seed corpus.
@@ -87,32 +87,32 @@ case "${SEEDS_KIND}" in
   gen)
     SEED_DIR="${MATTER_DIR}/seeds"
     if [[ ! -d "${SEED_DIR}" || -z "$(ls -A "${SEED_DIR}" 2>/dev/null)" ]]; then
-      echo "[afl-eval] generating hand-rolled seeds..."
+      echo "[chatafl-eval] generating hand-rolled seeds..."
       ( cd "${MATTER_DIR}" && python3 gen_matter_seeds.py -o seeds )
     fi ;;
   fsm|plain|both)
     SEED_DIR="${REPO_ROOT}/out/aflnet-seeds-${SEEDS_KIND}"
-    echo "[afl-eval] rebuilding ${SEEDS_KIND} seeds -> ${SEED_DIR}"
+    echo "[chatafl-eval] rebuilding ${SEEDS_KIND} seeds -> ${SEED_DIR}"
     rm -rf "${SEED_DIR}"
     if ! python3 "${CONVERTER}" --corpus "${SEEDS_KIND}" --out "${SEED_DIR}" "${LIMIT_ARG[@]}"; then
-      echo "[afl-eval] FATAL: seed conversion failed; aborting campaign" >&2
+      echo "[chatafl-eval] FATAL: seed conversion failed; aborting campaign" >&2
       exit 1
     fi
     [[ -d "${SEED_DIR}" && -n "$(ls -A "${SEED_DIR}" 2>/dev/null)" ]] || {
-      echo "[afl-eval] FATAL: seed dir ${SEED_DIR} empty after conversion" >&2; exit 1; } ;;
-  *) echo "[afl-eval] unknown --seeds '${SEEDS_KIND}' (gen|fsm|plain|both)" >&2; exit 1 ;;
+      echo "[chatafl-eval] FATAL: seed dir ${SEED_DIR} empty after conversion" >&2; exit 1; } ;;
+  *) echo "[chatafl-eval] unknown --seeds '${SEEDS_KIND}' (gen|fsm|plain|both)" >&2; exit 1 ;;
 esac
 
 NUM_CORES="$(nproc 2>/dev/null || echo '?')"
 mkdir -p "${OUT_DIR}"
 
-echo "[afl-eval] instances=${INSTANCES} max_total_time=${MAX_TOTAL_TIME}s interval=${INTERVAL}s"
-echo "[afl-eval] base_port=${BASE_PORT} seeds=${SEEDS_KIND}($(ls "${SEED_DIR}" | wc -l)) cores=${NUM_CORES}"
-echo "[afl-eval] fuzz_dut=${FUZZ_DUT}"
-echo "[afl-eval] cov_dut=${COV_DUT}"
-echo "[afl-eval] out_dir=${OUT_DIR}"
+echo "[chatafl-eval] instances=${INSTANCES} max_total_time=${MAX_TOTAL_TIME}s interval=${INTERVAL}s"
+echo "[chatafl-eval] base_port=${BASE_PORT} seeds=${SEEDS_KIND}($(ls "${SEED_DIR}" | wc -l)) cores=${NUM_CORES}"
+echo "[chatafl-eval] fuzz_dut=${FUZZ_DUT}"
+echo "[chatafl-eval] cov_dut=${COV_DUT}"
+echo "[chatafl-eval] out_dir=${OUT_DIR}"
 if [[ $(( INSTANCES )) -gt $(( ${NUM_CORES:-0} )) ]] 2>/dev/null; then
-  echo "[afl-eval] WARNING: ${INSTANCES} instances > ${NUM_CORES} cores; CPU contention expected" >&2
+  echo "[chatafl-eval] WARNING: ${INSTANCES} instances > ${NUM_CORES} cores; CPU contention expected" >&2
 fi
 
 {
@@ -271,15 +271,15 @@ for i in $(seq 1 "${INSTANCES}"); do
   sample_instance "${inst_dir}" "${start_epoch}" "${stagger}" "${cov_port}" &
   SAMPLER_PIDS+=("$!")
 
-  echo "[afl-eval] launched instance-${idx} port=${fuzz_port} cov_port=${cov_port} seed=${inst_seed}"
+  echo "[chatafl-eval] launched instance-${idx} port=${fuzz_port} cov_port=${cov_port} seed=${inst_seed}"
 done
 
-echo "[afl-eval] all ${INSTANCES} instances running; waiting (~${MAX_TOTAL_TIME}s)..."
+echo "[chatafl-eval] all ${INSTANCES} instances running; waiting (~${MAX_TOTAL_TIME}s)..."
 
 # Enforce max-total-time: kill all campaigns after the deadline.
 (
   sleep "${MAX_TOTAL_TIME}"
-  echo "[afl-eval] max-total-time reached; stopping all campaigns..."
+  echo "[chatafl-eval] max-total-time reached; stopping all campaigns..."
   for pid in "${CAMPAIGN_PIDS[@]}"; do
     kill "${pid}" 2>/dev/null || true
   done
@@ -289,28 +289,28 @@ TIMER_PID=$!
 for pid in "${CAMPAIGN_PIDS[@]}"; do wait "${pid}" 2>/dev/null || true; done
 kill "${TIMER_PID}" 2>/dev/null || true
 
-echo "[afl-eval] all campaigns finished; waiting for final coverage snapshots..."
+echo "[chatafl-eval] all campaigns finished; waiting for final coverage snapshots..."
 for pid in "${SAMPLER_PIDS[@]}"; do wait "${pid}" 2>/dev/null || true; done
 
 echo "ended=$(date -Iseconds)" >> "${OUT_DIR}/eval-meta.txt"
-echo "[afl-eval] all instances complete."
+echo "[chatafl-eval] all instances complete."
 
 if [[ "${DO_AGGREGATE}" -eq 1 ]]; then
-  echo "[afl-eval] aggregating coverage over time (SDK scope)..."
+  echo "[chatafl-eval] aggregating coverage over time (SDK scope)..."
   if python3 "${AGGREGATOR}" \
        --eval-dir "${OUT_DIR}" \
        --binary "${COV_DUT}" \
        --scope sdk; then
     python3 "${DASHBOARD}" --eval-dir "${OUT_DIR}" \
-      || echo "[afl-eval] dashboard generation failed; rerun: python3 ${DASHBOARD} --eval-dir ${OUT_DIR}" >&2
+      || echo "[chatafl-eval] dashboard generation failed; rerun: python3 ${DASHBOARD} --eval-dir ${OUT_DIR}" >&2
   else
-    echo "[afl-eval] aggregation failed; rerun manually:" >&2
+    echo "[chatafl-eval] aggregation failed; rerun manually:" >&2
     echo "  python3 ${AGGREGATOR} --eval-dir ${OUT_DIR} --binary ${COV_DUT}" >&2
   fi
 fi
 
 echo ""
-echo "[afl-eval] done. out=${OUT_DIR}"
-echo "[afl-eval]   per-instance curves: instance-*/coverage_timeline.sdk.csv"
-echo "[afl-eval]   aggregated curve:    ${OUT_DIR}/coverage_over_time.csv"
-echo "[afl-eval]   plot:                ${OUT_DIR}/coverage_over_time.png"
+echo "[chatafl-eval] done. out=${OUT_DIR}"
+echo "[chatafl-eval]   per-instance curves: instance-*/coverage_timeline.sdk.csv"
+echo "[chatafl-eval]   aggregated curve:    ${OUT_DIR}/coverage_over_time.csv"
+echo "[chatafl-eval]   plot:                ${OUT_DIR}/coverage_over_time.png"
