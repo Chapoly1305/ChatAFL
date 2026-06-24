@@ -2,7 +2,7 @@
 # Drive a ChatAFL fuzzing campaign against the patched Matter all-clusters-app DUT.
 #
 # Prerequisites (Linux campaign host):
-#   1. ChatAFL built with Matter support: `make MATTER=1 clean all`
+#   1. ChatAFL built: `make clean all`
 #      (llvm_mode / afl-clang-fast is NOT required — see note below.)
 #   2. The DUT built for Linux with:
 #        - matter_fuzz_dut_transport=true   (plaintext accept + session injection
@@ -15,11 +15,8 @@
 #      See ai_docs/benchmark-fuzzers.md for the exact gn args.
 #   3. Seeds generated: `python3 gen_matter_seeds.py -o seeds`
 #
-# Instrumentation note: AFLNet's legacy afl-clang-fast LLVM pass no longer builds
-# on modern LLVM. Instead the DUT is instrumented with the SDK's own pigweed
-# clang via -fsanitize-coverage=trace-pc-guard, whose callbacks are provided by
-# AFLNet's afl-llvm-rt.o.c (built with USE_TRACE_PC). Net result is identical: an
-# AFL edge-coverage bitmap + forkserver, with no toolchain swap.
+# Matter support: ChatAFL gets response-code state feedback via -P MATTER
+# (extract_response_codes_matter in aflnet.c). No Matter TLV decoding is provided.
 #
 # Usage:
 #   CHATAFL_DIR=/path/to/ChatAFL DUT=/path/to/chip-all-clusters-app ./run_campaign.sh [out_dir]
@@ -29,7 +26,7 @@
 #   SEEDS=seeds seed corpus dir
 #   KVS=...     DUT key-value store path (wiped each start)
 #   CHATAFL_LLM=1           enable LLM calls; needs CHATAFL_OPENAI_KEY
-#   CHATAFL_OPENAI_KEY=sk-… OpenAI key; absent ⇒ catalog-only, offline
+#   CHATAFL_OPENAI_KEY=sk-… OpenAI key
 #   CHATAFL_OPENAI_BASE=…   custom API base (e.g. Ollama)
 #   CHATAFL_OPENAI_MODEL=…  model name for custom base
 set -euo pipefail
@@ -52,15 +49,15 @@ DELAY="${DELAY:-10000}"
 [ -d "$SEEDS" ] || { echo "seed dir '$SEEDS' missing — run gen_matter_seeds.py first"; exit 1; }
 rm -f "$KVS"
 
-# ChatAFL binary (built with `make MATTER=1`).
+# ChatAFL binary.
 AFL_BIN="$CHATAFL_DIR/afl-fuzz"
-[ -x "$AFL_BIN" ] || { echo "ChatAFL binary '$AFL_BIN' not found; build with: make MATTER=1"; exit 1; }
+[ -x "$AFL_BIN" ] || { echo "ChatAFL binary '$AFL_BIN' not found; build with: make"; exit 1; }
 export CHATAFL=1
 export CHATAFL_LLM="${CHATAFL_LLM:-0}"
 if [ "$CHATAFL_LLM" = "1" ] &&
    [ -z "${CHATAFL_OPENAI_KEY:-}${OPENAI_API_KEY:-}${CHATAFL_OPENAI_BASE:-}" ]; then
   echo "CHATAFL_LLM=1 but no CHATAFL_OPENAI_KEY/OPENAI_API_KEY/"
-  echo "CHATAFL_OPENAI_BASE set; the run will proceed catalog-only (offline)."
+  echo "CHATAFL_OPENAI_BASE set; the run will proceed without LLM."
 fi
 
 # AFL host-environment bypasses (the campaign host's core_pattern pipes to an

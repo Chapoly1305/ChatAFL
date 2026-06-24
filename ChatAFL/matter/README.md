@@ -4,11 +4,10 @@ Benchmark integration of [AFLNet](https://github.com/aflnet/aflnet) **and
 [ChatAFL](https://github.com/ChatAFLndss/ChatAFL)** against the `all-clusters-app`
 Matter DUT. See `ai_docs/benchmark-fuzzers.md` for the full design and rationale.
 
-Both baselines come from this one tree: `make clean all` builds the plain AFLNet
-`afl-fuzz`; `make CHATAFL=1 afl-fuzz` builds the ChatAFL-for-Matter LLM-guided
-variant (everything behind `#ifdef CHATAFL`). They share the `-P MATTER` parser,
-the `MATTER_FUZZ_DUT_TRANSPORT` DUT, and the coverage-over-time eval — so the
-EclipseFuzz-vs-AFLNet-vs-ChatAFL comparison isolates exactly the LLM layer.
+Both baselines come from separate source trees. `aflnet/` builds the plain AFLNet
+`afl-fuzz`; `ChatAFL/ChatAFL/` builds the ChatAFL LLM-guided variant. They share the
+`-P MATTER` parser, the `MATTER_FUZZ_DUT_TRANSPORT` DUT, and the coverage-over-time
+eval — so the EclipseFuzz-vs-AFLNet-vs-ChatAFL comparison isolates exactly the LLM layer.
 
 ## Contents
 
@@ -17,35 +16,26 @@ EclipseFuzz-vs-AFLNet-vs-ChatAFL comparison isolates exactly the LLM layer.
 | `gen_matter_seeds.py` | Generate raw plaintext Matter request datagrams (AFLNet seeds) |
 | `udp_smoke_test.py` | Send one seed to a running DUT and print/parse the response |
 | `test_matter_parser.c` | Standalone unit test for `extract_*_matter` (any platform) |
-| `test_chatafl_tlv.c` | Standalone unit test for the ChatAFL TLV walker + catalog (`make test-chatafl`) |
 | `Dockerfile.aflnet` | Build AFLNet + ChatAFL (+ Matter parser) on Linux |
 | `run_campaign.sh` | Drive a campaign; `FUZZER=aflnet\|chatafl` |
 | `seeds/` | Generated seed corpus |
 
-The ChatAFL LLM layer lives one dir up: `../chat-llm-tlv.{c,h}` (dependency-free
-TLV walker + message catalog/encoder) and `../chat-llm.{c,h}` (libcurl/json-c
+The ChatAFL LLM layer lives one dir up: `../chat-llm.{c,h}` (libcurl/json-c
 transport + grammar/enrichment/stall prompts).
 
 ## ChatAFL-for-Matter in one paragraph
 
 ChatAFL is text-protocol machinery (RTSP `<<VALUE>>` templates + PCRE2). Matter is
-binary TLV, so the LLM layer was rewritten TLV-aware: the LLM operates at the
-message-type level (catalog augmentation, enrichment, stall) while mutable spans
-are found deterministically by walking the TLV (`matter_get_mutable_ranges` →
-value bytes only, never headers/MIC). Enable LLM calls with `CHATAFL=1
-CHATAFL_LLM=1 CHATAFL_OPENAI_KEY=sk-…`; with no key it runs catalog-only, offline.
-Any OpenAI-compatible endpoint works — for a **local model on your GPU** (no key):
+binary TLV, and EclipseFuzz does NOT provide TLV decoding to ChatAFL. ChatAFL gets
+only response-code state feedback via `-P MATTER` (same as AFLNet baseline:
+`extract_response_codes_matter` in `aflnet.c`). Its LLM layer operates on text
+representations only — no message-type catalog, no mutable-range guidance, no
+enriched seeds. Enable LLM calls with `CHATAFL_LLM=1` + API key; without a key it
+runs offline.
 
-```bash
-ollama serve & ; ollama pull qwen2.5:1.5b
-FUZZER=chatafl CHATAFL_LLM=1 CHATAFL_DEBUG=1 \
-  CHATAFL_OPENAI_BASE=http://localhost:11434 CHATAFL_OPENAI_MODEL=qwen2.5:1.5b \
-  AFLNET="$PWD" DUT=../../../out/afl-dut-cov/chip-all-clusters-app \
-  SEEDS="$PWD/matter/seeds" ./matter/run_campaign.sh /tmp/chatafl-llm
-```
-
-`CHATAFL_DEBUG=1` prints each LLM round-trip to stderr. The layer is firewalled
-from EclipseFuzz internals (FSM catalogs, oracles) to stay an independent baseline.
+`CHATAFL_DEBUG=1` prints each LLM round-trip to stderr. ChatAFL is firewalled
+from EclipseFuzz internals (FSM catalogs, oracles, TLV codec) to stay an
+independent baseline.
 
 ## How the pieces fit
 
