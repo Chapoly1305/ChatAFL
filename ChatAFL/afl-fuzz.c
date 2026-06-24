@@ -493,6 +493,8 @@ void setup_llm_grammars()
     {
       json_object *jobj = kl_val(iter);
 
+      if (!jobj || !json_object_is_type(jobj, json_type_array)) continue;
+
       json_object *header = json_object_array_get_idx(jobj, 0);
 
       int absent;
