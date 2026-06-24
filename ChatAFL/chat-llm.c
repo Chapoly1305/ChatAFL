@@ -119,6 +119,11 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
                 if (json_object_object_get_ex(jobj, "choices", NULL))
                 {
                     json_object *choices = json_object_object_get(jobj, "choices");
+                    // DeepSeek may return non-array "choices" on errors; guard the type.
+                    if (!choices || !json_object_is_type(choices, json_type_array)) {
+                      if (jobj) json_object_put(jobj);
+                      continue;
+                    }
                     json_object *first_choice = json_object_array_get_idx(choices, 0);
                     const char *data;
 
