@@ -236,6 +236,12 @@ for i in $(seq 1 "${INSTANCES}"); do
   # Write coverage-run.env so aggregate_coverage_over_time.py finds the binary.
   echo "MATTER_FUZZ_COVERAGE_BINARY=${COV_DUT}" > "${inst_dir}/coverage-run.env"
 
+  # Copy seeds to a private per-instance directory so hardlinks in afl-fuzz's
+  # queue don't share inodes across instances (avoids "Short read" races when
+  # the dry-run calibration touches queue files concurrently).
+  inst_seeds="${inst_dir}/seeds"
+  cp -r "${SEED_DIR}" "${inst_seeds}"
+
   # Stagger instance starts: 3 s apart so DUT forkservers don't all compete for
   # CPU at the same moment during dry_run calibration.  Instance 1 starts
   # immediately; each subsequent one waits 3 s more.
@@ -255,7 +261,7 @@ for i in $(seq 1 "${INSTANCES}"); do
         DUT="${FUZZ_DUT}" \
         PORT="${fuzz_port}" \
         DELAY=20000 \
-        SEEDS="${SEED_DIR}" \
+        SEEDS="${inst_seeds}" \
         KVS="${inst_kvs}" \
         CHATAFL_LLM="${CHATAFL_LLM:-0}" \
         CHATAFL_OPENAI_KEY="${CHATAFL_OPENAI_KEY:-}" \
