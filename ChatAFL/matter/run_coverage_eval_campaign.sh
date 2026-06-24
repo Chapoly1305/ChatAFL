@@ -38,7 +38,7 @@ AGGREGATOR="${REPO_ROOT}/examples/fuzzers/eclipsefuzz/stateful/tools/aggregate_c
 DASHBOARD="${REPO_ROOT}/examples/fuzzers/eclipsefuzz/stateful/tools/generate_coverage_dashboard.py"
 
 INSTANCES=20
-MAX_TOTAL_TIME=86400
+MAX_TOTAL_TIME=28800
 INTERVAL=1800
 BASE_PORT=5560
 SEEDS_KIND="both"
