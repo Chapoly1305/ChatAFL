@@ -44,6 +44,12 @@ static size_t chat_with_llm_helper(void *contents, size_t size, size_t nmemb, vo
 
 char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
 {
+    /* Skip LLM calls unless CHATAFL_LLM=1 (EclipseFuzz boundary: no TLV decoding
+       is provided to ChatAFL, so LLM calls are not required for basic fuzzing). */
+    const char *llm_enabled = getenv("CHATAFL_LLM");
+    if (!llm_enabled || strcmp(llm_enabled, "1") != 0)
+        return NULL;
+
     CURL *curl;
     CURLcode res = CURLE_OK;
     char *answer = NULL;
@@ -80,12 +86,22 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
     if (strcmp(model, "instruct") == 0)
     {
         const char *m = llm_model ? llm_model : "gpt-3.5-turbo-instruct";
-        asprintf(&data, "{\"model\": \"%s\", \"prompt\": \"%s\", \"max_tokens\": %d, \"temperature\": %f}", m, prompt, MAX_TOKENS, temperature);
+        // Build request body with json-c so prompt is properly escaped.
+        json_object *body = json_object_new_object();
+        json_object_object_add(body, "model", json_object_new_string(m));
+        json_object_object_add(body, "prompt", json_object_new_string(prompt));
+        json_object_object_add(body, "max_tokens", json_object_new_int(MAX_TOKENS));
+        json_object_object_add(body, "temperature", json_object_new_double(temperature));
+        data = strdup(json_object_to_json_string(body));
+        json_object_put(body);
     }
     else
     {
         const char *m = llm_model ? llm_model : "gpt-3.5-turbo";
-        asprintf(&data, "{\"model\": \"%s\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}", m, prompt, MAX_TOKENS, temperature);
+        // `prompt` is a caller-built JSON messages array; callers must produce
+        // valid JSON (construct_prompt_* functions use json-c for escaping).
+        asprintf(&data, "{\"model\": \"%s\",\"messages\": %s, \"max_tokens\": %d, \"temperature\": %f}",
+                 m, prompt, MAX_TOKENS, temperature);
     }
     curl_global_init(CURL_GLOBAL_DEFAULT);
     do
@@ -108,12 +124,21 @@ char *chat_with_llm(char *prompt, char *model, int tries, float temperature)
             curl_easy_setopt(curl, CURLOPT_URL, url);
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, chat_with_llm_helper);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);   /* 30s per LLM call */
 
             res = curl_easy_perform(curl);
 
             if (res == CURLE_OK)
             {
                 json_object *jobj = json_tokener_parse(chunk.memory);
+                if (!jobj) {
+                  printf("Error: could not parse JSON response: %s\n", chunk.memory);
+                  sleep(2); // back off before retry
+                  curl_slist_free_all(headers);
+                  curl_easy_cleanup(curl);
+                  free(chunk.memory);
+                  continue;
+                }
 
                 // Check if the "choices" key exists
                 if (json_object_object_get_ex(jobj, "choices", NULL))
@@ -180,10 +205,20 @@ char *construct_prompt_stall(char *protocol_name, char *examples, char *history)
     char *prompt = NULL;
     asprintf(&prompt, template, protocol_name, protocol_name, protocol_name, examples, history);
 
-    char *final_prompt = NULL;
+    // Build messages array with json-c for proper escaping.
+    json_object *messages = json_object_new_array();
+    json_object *sys_msg = json_object_new_object();
+    json_object_object_add(sys_msg, "role", json_object_new_string("system"));
+    json_object_object_add(sys_msg, "content", json_object_new_string("You are a helpful assistant."));
+    json_object_array_add(messages, sys_msg);
 
-    asprintf(&final_prompt, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", prompt);
+    json_object *user_msg = json_object_new_object();
+    json_object_object_add(user_msg, "role", json_object_new_string("user"));
+    json_object_object_add(user_msg, "content", json_object_new_string(prompt));
+    json_object_array_add(messages, user_msg);
 
+    char *final_prompt = strdup(json_object_to_json_string(messages));
+    json_object_put(messages);
     free(prompt);
 
     return final_prompt;
@@ -205,15 +240,21 @@ char *construct_prompt_for_templates(char *protocol_name, char **final_msg)
     char *msg = NULL;
     asprintf(&msg, "%s\\n%s\\nFor the %s protocol, all of client request templates are :", prompt_rtsp_example, prompt_http_example, protocol_name);
     *final_msg = msg;
-    /** Format of prompt_grammars
-    prompt_grammars = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": msg}
-    ]
-     **/
-    char *prompt_grammars = NULL;
 
-    asprintf(&prompt_grammars, "[{\"role\": \"system\", \"content\": \"You are a helpful assistant.\"}, {\"role\": \"user\", \"content\": \"%s\"}]", msg);
+    // Build messages array with json-c for proper escaping of msg content.
+    json_object *messages = json_object_new_array();
+    json_object *sys_msg = json_object_new_object();
+    json_object_object_add(sys_msg, "role", json_object_new_string("system"));
+    json_object_object_add(sys_msg, "content", json_object_new_string("You are a helpful assistant."));
+    json_object_array_add(messages, sys_msg);
+
+    json_object *user_msg = json_object_new_object();
+    json_object_object_add(user_msg, "role", json_object_new_string("user"));
+    json_object_object_add(user_msg, "content", json_object_new_string(msg));
+    json_object_array_add(messages, user_msg);
+
+    char *prompt_grammars = strdup(json_object_to_json_string(messages));
+    json_object_put(messages);
 
     return prompt_grammars;
 }
@@ -223,24 +264,31 @@ char *construct_prompt_for_remaining_templates(char *protocol_name, char *first_
     char *second_question = NULL;
     asprintf(&second_question, "For the %s protocol, other templates of client requests are:", protocol_name);
 
-    json_object *answer_str = json_object_new_string(first_answer);
-    // printf("The First Question\n%s\n\n", first_question);
-    // printf("The First Answer\n%s\n\n", first_answer);
-    // printf("The Second Question\n%s\n\n", second_question);
-    const char *answer_str_escaped = json_object_to_json_string(answer_str);
+    // Build messages array with json-c for proper escaping.
+    json_object *messages = json_object_new_array();
 
-    char *prompt = NULL;
+    json_object *sys_msg = json_object_new_object();
+    json_object_object_add(sys_msg, "role", json_object_new_string("system"));
+    json_object_object_add(sys_msg, "content", json_object_new_string("You are a helpful assistant."));
+    json_object_array_add(messages, sys_msg);
 
-    asprintf(&prompt,
-             "["
-             "{\"role\": \"system\", \"content\": \"You are a helpful assistant.\"},"
-             "{\"role\": \"user\", \"content\": \"%s\"},"
-             "{\"role\": \"assistant\", \"content\": %s },"
-             "{\"role\": \"user\", \"content\": \"%s\"}"
-             "]",
-             first_question, answer_str_escaped, second_question);
+    json_object *user_msg1 = json_object_new_object();
+    json_object_object_add(user_msg1, "role", json_object_new_string("user"));
+    json_object_object_add(user_msg1, "content", json_object_new_string(first_question));
+    json_object_array_add(messages, user_msg1);
 
-    json_object_put(answer_str);
+    json_object *asst_msg = json_object_new_object();
+    json_object_object_add(asst_msg, "role", json_object_new_string("assistant"));
+    json_object_object_add(asst_msg, "content", json_object_new_string(first_answer));
+    json_object_array_add(messages, asst_msg);
+
+    json_object *user_msg2 = json_object_new_object();
+    json_object_object_add(user_msg2, "role", json_object_new_string("user"));
+    json_object_object_add(user_msg2, "content", json_object_new_string(second_question));
+    json_object_array_add(messages, user_msg2);
+
+    char *prompt = strdup(json_object_to_json_string(messages));
+    json_object_put(messages);
     free(second_question);
 
     return prompt;
