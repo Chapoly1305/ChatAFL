@@ -81,7 +81,7 @@ exec "$AFL_BIN" \
   -d \
   -i "$SEEDS" -o "$OUT" \
   -N "udp://127.0.0.1/$PORT" \
-  -K \
+  -P RAW -K \
   -D "$DELAY" \
   -m none -t 4000+ \
   -- "$DUT" --secured-device-port "$PORT" --KVS "$KVS"
