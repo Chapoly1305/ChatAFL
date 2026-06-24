@@ -245,6 +245,7 @@ for i in $(seq 1 "${INSTANCES}"); do
         AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \
         AFL_NO_AFFINITY=1 \
         AFL_SKIP_CRASHES=1 \
+        AFL_SKIP_CORE_PATTERN=1 \
         CHATAFL_DIR="${CHATAFL_DIR}" \
         DUT="${FUZZ_DUT}" \
         PORT="${fuzz_port}" \

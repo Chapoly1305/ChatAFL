@@ -43,6 +43,10 @@
 #include "alloc-inl.h"
 #include "hash.h"
 #include "chat-llm.h"
+#ifdef MATTER
+#include "chat-llm-tlv.h"
+static matter_catalog_t *matter_cat = NULL;
+#endif
 
 #include <stdio.h>
 #include <unistd.h>
@@ -433,6 +437,20 @@ u32 reward_grammar;
 
 void setup_llm_grammars()
 {
+#ifdef MATTER
+  /* Matter uses binary TLV — replace text grammar with TLV catalog. */
+  ACTF("ChatAFL-Matter: building message-type catalog from '%s'...", in_dir);
+  matter_cat = matter_catalog_build(in_dir);
+  OKF("ChatAFL-Matter: %u message types from corpus.", matter_catalog_size(matter_cat));
+  if (matter_llm_enabled()) {
+    int added = matter_catalog_llm_augment(matter_cat);
+    OKF("ChatAFL-Matter: LLM added %d message types (total %u).", added,
+        matter_catalog_size(matter_cat));
+  } else {
+    WARNF("ChatAFL-Matter: LLM disabled; running catalog-only enrichment.");
+  }
+  return;
+#endif
 
   ACTF("Getting grammars from LLM...");
 
@@ -2770,6 +2788,15 @@ void get_seeds_with_messsage_types(const char *in_dir, khash_t(strSet) * message
 /* Enrich the testcases before startup */
 static void enrich_testcases(void)
 {
+#ifdef MATTER
+  /* Matter binary TLV: deterministic append of missing catalog types. */
+  if (matter_cat) {
+    int enr = matter_catalog_write_enriched(matter_cat, in_dir);
+    OKF("ChatAFL-Matter: wrote %d enriched seeds.", enr);
+  }
+  return;
+#endif
+
   ACTF("Enriching test cases from LLM...");
 
   // char *message_prompt = construct_prompt_for_protocol_message_types(protocol_name);
@@ -6846,6 +6873,37 @@ AFLNET_REGIONS_SELECTION:;
   if (uninteresting_times >= UNINTERESTING_THRESHOLD && chat_times < CHATTING_THRESHOLD)
   {
     uninteresting_times = 0;
+
+#ifdef MATTER
+    /* Matter binary TLV: ask LLM (or catalog) for next message type to append. */
+    if (matter_cat && matter_catalog_size(matter_cat) > 0 && queue_cur && queue_cur->fname) {
+      chat_times++;
+      FILE *sf = fopen((char *)queue_cur->fname, "rb");
+      if (sf) {
+        fseek(sf, 0, SEEK_END); long sl = ftell(sf); fseek(sf, 0, SEEK_SET);
+        if (sl > 0) {
+          u8 *sb = ck_alloc(sl);
+          if (fread(sb, 1, sl, sf) == (size_t)sl) {
+            unsigned char *nb = NULL; unsigned int nl = 0;
+            if (matter_llm_next_seed(matter_cat, sb, (unsigned)sl, &nb, &nl)) {
+              u8 *fn = alloc_printf("%s/queue/chatafl_stall_%u", out_dir, chat_times);
+              s32 sfd = open((char *)fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+              if (sfd >= 0) {
+                ck_write(sfd, nb, nl, fn);
+                close(sfd);
+                add_to_queue(fn, nl, 0);
+              } else { ck_free(fn); }
+              free(nb);
+            }
+          }
+          ck_free(sb);
+        }
+        fclose(sf);
+      }
+    }
+    goto end_stall;
+#endif
+
     // Fuzzing is stalled - ask LLM for help by taking the current sequence and if it is has a prefix,
     // ask the LLM to generate a possibly correct next message
     u32 *response_bytes_temp = NULL;
@@ -7023,6 +7081,9 @@ AFLNET_REGIONS_SELECTION:;
       }
     }
   }
+#ifdef MATTER
+  end_stall:;
+#endif
 
   /* Construct the buffer to be mutated and update out_buf */
   if (M2_prev == NULL)
@@ -8180,7 +8241,25 @@ havoc_stage:
     stage_short = "havoc_exploit";
     // exploitation - utilize the grammars we have
 
+#ifdef MATTER
+    /* Binary TLV exploit: restrict mutations to TLV value spans. */
+    u32 matter_nr = 0;
+    mrange_t *matter_ranges = matter_get_mutable_ranges(out_buf, (unsigned)temp_len, &matter_nr);
+    if (matter_ranges && matter_nr > 0) {
+      for (u32 _i = 0; _i < matter_nr; _i++) {
+        range rv = {.start = matter_ranges[_i].start,
+                    .len   = matter_ranges[_i].len,
+                    .mutable = 1};
+        kv_push(range, original_ranges, rv);
+      }
+    } else {
+      range v = {.len = temp_len, .start = 0, .mutable = 1};
+      kv_push(range, original_ranges, v);
+    }
+    if (matter_ranges) free(matter_ranges);
+#else
     original_ranges = parse_buffer(out_buf, temp_len);
+#endif
   }
 
   int rc = kv_size(original_ranges);
@@ -9690,6 +9769,8 @@ static void check_crash_handling(void)
 
   ACTF("Checking core_pattern...");
 
+  if (getenv("AFL_SKIP_CORE_PATTERN")) return;
+
   if (read(fd, &fchar, 1) == 1 && fchar == '|')
   {
 
@@ -10521,6 +10602,11 @@ int main(int argc, char **argv)
       {
         extract_requests = &extract_requests_ipp;
         extract_response_codes = &extract_response_codes_ipp;
+      }
+      else if (!strcmp(optarg, "MATTER"))
+      {
+        extract_requests = &extract_requests_matter;
+        extract_response_codes = &extract_response_codes_matter;
       }
       else
       {
